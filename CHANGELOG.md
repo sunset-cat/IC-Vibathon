@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add set_count update method to allow setting the counter to a specific value
 - Add frontend development server scripts (`npm run start`)
 - Add LLM canister implementation
+- Add EVM bridge canister using ICP chain key: canister holds an EVM wallet, receives USDC on multiple EVM chains, allows users to provide liquidity with ask price, buy USDC by cross-chain transfer, and withdraw liquidity. Tracks liquidity per user and verifies EVM transactions on-chain.
+- Add mutex-like BusyGuard for safe concurrent access to liquidity state.
+- Add replay protection for provide_liquidity by tracking used tx_hash values.
+- Require EVM tx verification for provide_liquidity (user must supply tx_hash and EVM address).
+- Use actual canister EVM address (cached or async) in all EVM business logic.
 
 ### Changed
 

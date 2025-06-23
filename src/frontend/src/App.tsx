@@ -4,6 +4,7 @@ import ReactIcon from "../assets/React-icon.webp";
 // Import components and views
 import { Loader, ErrorDisplay } from "./components";
 import { GreetingView, CounterView, LlmPromptView } from "./views";
+import LiquidityDashboard from "./views/LiquidityDashboard";
 
 function App() {
   const [loading, setLoading] = useState(false);
@@ -59,6 +60,9 @@ function App() {
 
             {/* LLM Prompt Section */}
             <LlmPromptView onError={handleError} setLoading={setLoading} />
+
+            {/* Liquidity Dashboard Section */}
+            <LiquidityDashboard />
           </div>
 
           {/* Loading and Error States */}

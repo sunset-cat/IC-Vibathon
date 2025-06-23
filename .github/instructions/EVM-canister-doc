@@ -1,0 +1,485 @@
+Using the EVM RPC canister
+Advanced
+Ethereum
+Tutorial
+For creating and signing transactions, using ic-alloy provides a more seamless workflow. Requests made using ic-alloy are not replicated between more than one RPC provider, but that is acceptable when submitting signed transactions.
+
+For querying token balances, verifying that transactions have the right number of confirmations, or other workflows that rely on replicated responses, using the EVM-RPC canister directly provides a better experience.
+
+Supported RPC methods
+The following JSON-RPC methods are available as part of the canister's Candid interface:
+
+eth_feeHistory: Queries the historical fee data to estimate gas prices for transactions.
+eth_getLogs: Queries the logs of a specified block or transaction.
+eth_getBlockByNumber: Queries information about a given block.
+eth_getTransactionCount: Queries the number of transactions for a specified address.
+eth_getTransactionReceipt: Queries details about a submitted transaction.
+eth_sendRawTransaction: Submits a signed transaction to the Ethereum network.
+eth_call: Query the state of a smart contract.
+Other RPC methods, including those specific to non-Ethereum networks, may be accessed using the canister's request method.
+
+Supported RPC providers
+The EVM RPC canister has built-in support for the following Ethereum JSON-RPC providers:
+
+Alchemy: Ethereum mainnet, Sepolia testnet, L2 chains.
+Ankr: Ethereum mainnet, Sepolia testnet, L2 chains.
+BlockPI: Ethereum mainnet, Sepolia testnet, L2 chains.
+Cloudflare Web3: Ethereum mainnet.
+Public Node: Ethereum mainnet, Sepolia testnet, L2 chains.
+LlamaNodes: Ethereum mainnet, Sepolia testnet, L2 chains.
+Many of the providers on ChainList.org can be called using the canister's request method.
+
+Importing or deploying the EVM RPC canister
+Using dfx deps
+To use the EVM RPC canister, you can pull it into your project using dfx deps by configuring your project's dfx.json file:
+
+{
+  "canisters": {
+    "evm_rpc": {
+      "type": "pull",
+      "id": "7hfb6-caaaa-aaaar-qadga-cai",
+    }
+  }
+}
+
+Then, run the commands:
+
+# Start the local development environment
+dfx start --background
+
+# Locally deploy the `evm_rpc` canister
+dfx deps pull
+dfx deps init evm_rpc --argument '(record {})'
+dfx deps deploy
+
+Using Candid and Wasm files
+Alternatively, you can include the EVM RPC canister by specifying the Candid and Wasm files in your dfx.json file:
+
+{
+  "canisters": {
+    "evm_rpc": {
+      "type": "custom",
+      "candid": "https://github.com/internet-computer-protocol/evm-rpc-canister/releases/latest/download/evm_rpc.did",
+      "wasm": "https://github.com/internet-computer-protocol/evm-rpc-canister/releases/latest/download/evm_rpc.wasm.gz",
+      "remote": {
+        "id": {
+          "ic": "7hfb6-caaaa-aaaar-qadga-cai"
+        }
+      }
+    }
+  }
+}
+
+
+Then start the local development environment and deploy the canister locally with a specified number of nodes (31 for the fiduciary subnet):
+
+dfx start --clean --background
+dfx deploy evm_rpc --argument '(record {})'
+
+Fork the EVM RPC canister
+Another option is to create a fork of the EVM RPC canister:
+
+git clone https://github.com/internet-computer-protocol/evm-rpc-canister
+
+To deploy your own canister on the mainnet, run the dfx deploy command with the --network ic flag:
+
+dfx deploy evm_rpc --network ic --argument '(record {})'
+
+Note that when deploying your own canister, you may encounter API rate limits. Refer to the replacing API keys section to learn how to configure API credentials.
+
+ic-alloy
+The ic-alloy Rust crate can be used to interact with the EVM RPC canister from Rust code. It simplifies the code necessary to perform common EVM operations.
+
+The ic-alloy-toolkit includes a collection of examples demonstrating how ic-alloy can be used.
+
+View the ic-alloy documentation for more information.
+
+Get event logs
+Motoko
+Rust
+dfx
+#[ic_cdk::update]
+async fn get_logs(get_logs_args: GetLogsArgs) -> Vec<evm_rpc::LogEntry> {
+    let rpc_providers = RpcServices::EthMainnet(Some(vec![EthMainnetService::Alchemy]));
+
+    let cycles = 20_000_000_000_000;
+    let (result,) = EVM_RPC
+        .eth_get_logs(rpc_providers, None, get_logs_args, cycles)
+        .await
+        .expect("Call failed");
+
+    match result {
+        MultiGetLogsResult::Consistent(r) => match r {
+            GetLogsResult::Ok(block) => block,
+            GetLogsResult::Err(err) => panic!("{err:?}"),
+        },
+        MultiGetLogsResult::Inconsistent(_) => {
+            panic!("RPC providers gave inconsistent results")
+        }
+    }
+}
+
+This example use case displays a caveat that comes with mapping the eth_getLogs spec to Candid, where a topic can either be a single value or an array of topics. A single-element array is equivalent to passing a string.
+
+Get the latest Ethereum block info
+Motoko
+Rust
+dfx
+use ic_cdk::api::call::call_with_payment128;
+use declarations::evm_rpc::{Block, BlockTag, MultiGetBlockByNumberResult, RpcError, RpcService, EVM_RPC as evm_rpc};
+
+let cycles = 2000000000;
+let (results,): (MultiGetBlockByNumberResult,) = call_with_payment128(
+    evm_rpc.0,
+    "eth_getBlockByNumber",
+    (
+        RpcServices::EthMainnet(None),
+        (),
+        BlockTag::Number(19709434.into()),
+    ),
+    cycles,
+)
+.await
+.unwrap();
+
+Get receipt for transaction
+Motoko
+Rust
+dfx
+use ic_cdk::api::call::call_with_payment128;
+use declarations::evm_rpc::{
+    BlockTag, MultiGetTransactionReceiptResult, RpcError, RpcServices, evm_rpc,
+};
+
+let cycles = 20000000000;
+let (results,): (MultiGetTransactionReceiptResult,) = call_with_payment128(
+    evm_rpc.0,
+    "eth_getTransactionReceipt",
+    (
+        RpcServices::EthMainnet(None),
+        (),
+        "0xdd5d4b18923d7aae953c7996d791118102e889bea37b48a651157a4890e4746f",
+    ),
+    10000000000,
+)
+.await
+.unwrap();
+
+Call an Ethereum smart contract
+Motoko
+Rust
+pub async fn eth_call(
+    contract_address: String,
+    abi: &Contract,
+    function_name: &str,
+    args: &[Token],
+    block_number: &str,
+) -> Vec<Token> {
+    let f = match abi.functions_by_name(function_name).map(|v| &v[..]) {
+        Ok([f]) => f,
+        Ok(fs) => panic!(
+            "Found {} function overloads. Please pass one of the following: {}",
+            fs.len(),
+            fs.iter()
+                .map(|f| format!("{:?}", f.abi_signature()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Err(_) => abi
+            .functions()
+            .find(|f| function_name == f.abi_signature())
+            .expect("Function not found"),
+    };
+    let data = f
+        .encode_input(args)
+        .expect("Error while encoding input args");
+    let json_rpc_payload = serde_json::to_string(&JsonRpcRequest {
+        id: next_id().await.0.try_into().unwrap(),
+        jsonrpc: "2.0".to_string(),
+        method: "eth_call".to_string(),
+        params: (
+            EthCallParams {
+                to: contract_address,
+                data: to_hex(&data),
+            },
+            block_number.to_string(),
+        ),
+    })
+    .expect("Error while encoding JSON-RPC request");
+
+    let res: CallResult<(RequestResult,)> = call_with_payment(
+        crate::declarations::evm_rpc::evm_rpc.0,
+        "request",
+        (
+            RpcService::EthSepolia(EthSepoliaService::BlockPi),
+            json_rpc_payload,
+            2048_u64,
+        ),
+        2_000_000_000,
+    )
+    .await;
+
+    match res {
+        Ok((RequestResult::Ok(ok),)) => {
+            let json: JsonRpcResult =
+                serde_json::from_str(&ok).expect("JSON was not well-formatted");
+            let result = from_hex(&json.result.expect("Unexpected JSON response")).unwrap();
+            f.decode_output(&result).expect("Error decoding output")
+        }
+        err => panic!("Response error: {err:?}"),
+    }
+}
+
+Get number of transactions for a contract
+Motoko
+Rust
+dfx
+use ic_cdk::api::call::call_with_payment128;
+use declarations::evm_rpc::{
+    BlockTag, GetTransactionCountArgs, MultiGetTransactionCountResult, RpcError, RpcServices, evm_rpc,
+};
+
+let cycles = 20000000000;
+let (results,): (MultiGetTransactionCountResult,) = call_with_payment128(
+    evm_rpc.0,
+    "eth_getTransactionCount",
+    (
+        RpcServices::EthMainnet(None),
+        (),
+        GetTransactionCountArgs {
+            address: "0x1789F79e95324A47c5Fd6693071188e82E9a3558".to_string(),
+            block: BlockTag::Latest,
+        },
+    ),
+   cycles,
+)
+.await
+.unwrap();
+
+Get the fee history
+Motoko
+Rust
+dfx
+pub async fn fee_history(
+    network: String,
+    block_count: u128,
+    newest_block: BlockTag,
+    reward_percentiles: Option<serde_bytes::ByteBuf>,
+) -> FeeHistory {
+    let config = None;
+    let args = FeeHistoryArgs {
+        blockCount: block_count,
+        newestBlock: newest_block,
+        rewardPercentiles: reward_percentiles,
+    };
+
+    let services = match network.as_str() {
+        "EthSepolia" => RpcServices::EthSepolia(Some(vec![EthSepoliaService::Alchemy])),
+        "EthMainnet" => RpcServices::EthMainnet(None),
+        _ => RpcServices::EthSepolia(None),
+    };
+
+    let cycles = 20000000;
+    match EvmRpcCanister::eth_fee_history(services, config, args, cycles).await {
+        Ok((res,)) => match res {
+            MultiFeeHistoryResult::Consistent(fee_history) => match fee_history {
+                FeeHistoryResult::Ok(fee_history) => fee_history.unwrap(),
+                FeeHistoryResult::Err(e) => {
+                    ic_cdk::trap(format!("Error: {:?}", e).as_str());
+                }
+            },
+            MultiFeeHistoryResult::Inconsistent(_) => {
+                ic_cdk::trap("Fee history is inconsistent");
+            }
+        },
+        Err(e) => ic_cdk::trap(format!("Error: {:?}", e).as_str()),
+    }
+}
+
+Send a raw transaction
+The EVM RPC canister can also be used to send raw transactions to the Ethereum and other EVM-compatible chains. Examples for using the EVM RPC canister can be found below, or you can view the documentation for sending a raw ETH transaction.
+
+Motoko
+Rust
+dfx
+pub async fn send_raw_transaction(network: String, raw_tx: String) -> SendRawTransactionStatus {
+    let config = None;
+    let services = match network.as_str() {
+        "EthSepolia" => RpcServices::EthSepolia(Some(vec![EthSepoliaService::Alchemy])),
+        "EthMainnet" => RpcServices::EthMainnet(None),
+        _ => RpcServices::EthSepolia(None),
+    };
+
+    let cycles = 20000000;
+    match EvmRpcCanister::eth_send_raw_transaction(services, config, raw_tx, cycles).await {
+        Ok((res,)) => match res {
+            MultiSendRawTransactionResult::Consistent(status) => match status {
+                SendRawTransactionResult::Ok(status) => status,
+                SendRawTransactionResult::Err(e) => {
+                    ic_cdk::trap(format!("Error: {:?}", e).as_str());
+                }
+            },
+            MultiSendRawTransactionResult::Inconsistent(_) => {
+                ic_cdk::trap("Status is inconsistent");
+            }
+        },
+        Err(e) => ic_cdk::trap(format!("Error: {:?}", e).as_str()),
+    }
+}
+
+Some JSON-RPC APIs may only return a NonceTooLow status when successfully submitting a transaction. This is because during the HTTP outcall consensus, only the first request is successful, while the others reply with a duplicate transaction status. If you encounter this issue, one possible workaround is to use a deduplicating proxy server such as the community-built C-ATTS EVM RPC proxy (source code).
+
+Error "already known"
+Sending a transaction to the Ethereum network is a state changing operation. Since the EVM-RPC canister sends a transaction to some JSON-RPC providers via HTTPs outcalls, each contacted provider will receive the same transaction multiple times.
+
+Therefore, it is possible that the contacted provider may return the following error:
+
+"{ code: -32603, message: \"already known\" }"
+
+Assuming the sent transaction is valid, one node of the contacted provider should accept the transaction, while the others should return some error such as the one displayed above. Note that the exact error returned is EVM-client specific, as the Ethereum JSON-RPC API itself doesn't specify errors, meaning that other errors could occur, such as an error indicating that consensus on the IC could not be reached.
+
+Note that even if an error is returned, you should assume that your transaction is known to the Ethereum network. You can verify whether your transaction was included in a block by querying the transaction count (via eth_getTransactionCount) at the Latest block height.
+
+Send a raw JSON-RPC request
+Motoko
+Rust
+dfx
+use declarations::evm_rpc::{RpcError, RpcService, evm_rpc};
+
+let cycles = 2000000000;
+let params = (
+    RpcService::EthMainnet,
+    "{\"jsonrpc\":\"2.0\",\"method\":\"eth_gasPrice\",\"params\":null,\"id\":1}".to_string(),
+    1000_u64, // Max response size in bytes
+);
+let (result,): (Result<String, RpcError>,) =
+    ic_cdk::api::call::call_with_payment128(evm_rpc.0, "request", params, cycles)
+        .await
+        .unwrap();
+match result {
+    Ok(response) => {
+        // Process JSON response
+    }
+    Err(err) => ic_cdk::trap(&format!("Error while performing RPC call: {:?}", err)),
+}
+
+Specifying an EVM chain
+Motoko
+Rust
+dfx
+    // Define request parameters
+    let params = (
+        RpcService::Chain(1), // Ethereum mainnet
+        "{\"jsonrpc\":\"2.0\",\"method\":\"eth_gasPrice\",\"params\":null,\"id\":1}".to_string(),
+        1000 as u64,
+    );
+
+Specifying RPC services
+RpcServices is used to specify which HTTPS outcalls APIs to use in the request. There are several ways to use specific JSON-RPC services:
+
+// Used for Candid-RPC canister methods (`eth_getLogs`, `eth_getBlockByNumber`, etc.)
+type RpcServices = variant {
+  EthMainnet : opt vec EthMainnetService;
+  EthSepolia : opt vec EthSepoliaService;
+  ArbitrumOne : opt vec L2MainnetService;
+  BaseMainnet : opt vec L2MainnetService;
+  OptimismMainnet : opt vec L2MainnetService;
+  ...
+  Custom : record {
+    chainId : nat64;
+    services : vec record { url : text; headers : opt vec (text, text) };
+  }
+};
+
+// Used for the JSON-RPC `request` canister method
+type RpcService = variant {
+  EthMainnet : EthMainnetService;
+  EthSepolia : EthSepoliaService;
+  ArbitrumOne : L2MainnetService;
+  BaseMainnet : L2MainnetService;
+  OptimismMainnet : L2MainnetService;
+  ...
+  Provider : nat64;
+  Custom : record { url : text; headers : opt vec (text, text) };
+};
+
+
+Replacing API keys
+If you are a controller or a principal autorized to manage API keys (given upon canister initialization in the manageApiKeys field), you can replace the API keys used by the EVM RPC canister. The first step is to determine the relevant providerId that identifies a supported JSON RPC provider.
+
+Run the following command to view all registered providers:
+
+dfx canister call evm_rpc getProviders
+
+You should see a list of values. Look for the providerId, which in this case is 0:
+
+record {
+  access = variant {
+    Authenticated = record {
+      publicUrl = opt "https://cloudflare-eth.com/v1/mainnet";
+      auth = variant { BearerToken = record { url = "https://cloudflare-eth.com/v1/mainnet";} };
+    }
+  };
+  alias = opt variant { EthMainnet = variant { Cloudflare } };
+  chainId = 1 : nat64;
+  providerId = 0 : nat64;
+};
+
+
+Update the configuration for an existing provider using the updateApiKeys method:
+
+dfx canister call evm_rpc updateApiKeys '(vec { record { 0 : nat64;  opt "YOUR-API-KEY" } } )'
+
+
+Error messages
+Error "TooFewCycles"
+"ProviderError(TooFewCycles { expected: 798336000, received: 307392000 })"
+
+You may receive this error if multiple JSON-RPC providers were queried and one did not receive enough cycles for the request. You can safely attach more cycles to your query, since unused cycles will be refunded.
+
+Filtering logs
+The consoleFilter argument can be passed to the EVM RPC canister to filter what log messages are shown.
+
+The default configuration is to show all logs:
+
+dfx deploy evm_rpc --argument "(record { consoleFilter = opt variant { ShowAll } })"
+
+
+Hide all logs:
+
+dfx deploy evm_rpc --argument "(record { consoleFilter = opt variant { HideAll } })"
+
+
+The ShowPattern and HidePattern arguments can be used to filter out regular expressions, such as filtering out logs tagged with INFO:
+
+dfx deploy evm_rpc --argument "(record { consoleFilter = opt variant { ShowPattern = "^INFO" } })"
+
+
+Or, hide logs tagged with TRACE_HTTP:
+
+dfx deploy evm_rpc --argument "(record { consoleFilter = opt variant { HidePattern = "^TRACE_HTTP" } })"
+
+
+ShowPattern and HidePattern are evaluated using the regex crate.
+
+Important notes
+RPC result consistency
+When calling RPC methods directly through the Candid interface (rather than via the request method), the canister will compare results from several JSON-RPC APIs and return a Consistent or Inconsistent variant based on whether the APIs agree on the result.
+
+By default, the canister uses three different RPC providers, which may change depending on availability. It's possible to specify which providers to use for this consistency check. For example:
+
+dfx canister call evm_rpc eth_getTransactionCount '(variant {EthMainnet = opt vec {Cloudflare; PublicNode}}, record {address = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; block = variant {Tag = variant {Latest}}})' --with-cycles 100000000000 --wallet=$(dfx identity get-wallet)
+
+
+HTTPS outcalls consensus
+Be sure to verify that RPC requests work as expected on the ICP mainnet. HTTPS outcalls performed in the request method only reach consensus if the JSON-RPC response is the same each call.
+
+If you encounter an issue with consensus, please let us know and we will look into whether it's possible to add official support for your use case.
+
+Response size estimates
+In some cases, it's necessary to perform multiple HTTPS outcalls with increasing maximum response sizes to complete a request. This is relatively common for the eth_getLogs method and may increase the time and cost of performing an RPC call. One solution is to specify an initial response size estimate (in bytes):
+
+dfx canister call evm_rpc eth_getLogs "(variant {EthMainnet}, record {responseSizeEstimate = 5000}, record {addresses = vec {\"0xdAC17F958D2ee523a2206206994597C13D831ec7\"}})" --with-cycles=1000000000 --wallet=$(dfx identity get-wallet)
+
+
+If the response is larger than the estimate, the canister will double the max response size and retry until either receiving a response or running out of cycles given by the --with-cycles flag.
